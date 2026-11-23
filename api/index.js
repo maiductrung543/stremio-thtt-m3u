@@ -15,7 +15,7 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.3.0",
+  version: "1.0.0",
   name: "Thể Thao BLTV",
   description: "Addon Stremio xem luồng trực tiếp từ nguồn Xôi Chè TV",
   logo: BALL_LOGO_URL,
