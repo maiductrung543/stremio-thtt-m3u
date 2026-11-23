@@ -3,6 +3,7 @@ const fetch = require("node-fetch");
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000;
+const HOT_STREAM_THRESHOLD = 4;
 
 const M3U_URL = process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1";
 const GROUP_NAME = "Xôi Chè TV";
@@ -17,7 +18,7 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.4.0",
+  version: "1.5.0",
   name: "Thể Thao BLTV",
   description: "Addon Stremio xem luồng trực tiếp từ nguồn Xôi Chè TV",
   logo: BALL_LOGO_URL,
@@ -46,6 +47,14 @@ function normalizeText(str = "") {
     .trim();
 }
 
+function formatSingleLineTitle(rawTitle = "", fallbackTitle = "") {
+  const cleaned = String(rawTitle || fallbackTitle)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || fallbackTitle;
+}
+
 function createEmptyMeta(fallbackIndex) {
   return {
     name: `${GROUP_NAME} ${fallbackIndex}`,
@@ -70,13 +79,11 @@ function parseM3U(m3uText) {
       const uaMatch = line.match(/http-user-agent="([^"]*)"/i);
       const refMatch = line.match(/http-referrer="([^"]*)"/i);
       const commaIdx = line.lastIndexOf(",");
-      const title =
-        commaIdx !== -1
-          ? line.slice(commaIdx + 1).trim()
-          : `${GROUP_NAME} ${streamIndex + 1}`;
+      const fallbackName = `${GROUP_NAME} ${streamIndex + 1}`;
+      const rawTitle = commaIdx !== -1 ? line.slice(commaIdx + 1) : fallbackName;
 
       currentMeta = {
-        name: title || `${GROUP_NAME} ${streamIndex + 1}`,
+        name: formatSingleLineTitle(rawTitle, fallbackName),
         poster: logoMatch && logoMatch[1] ? logoMatch[1].trim() : "",
         userAgent: uaMatch && uaMatch[1] ? uaMatch[1].trim() : "",
         referer: refMatch && refMatch[1] ? refMatch[1].trim() : ""
@@ -98,12 +105,14 @@ function parseM3U(m3uText) {
     if (!line.startsWith("#")) {
       streamIndex += 1;
       const meta = currentMeta || createEmptyMeta(streamIndex);
-      const key = normalizeText(meta.name) || `${GROUP_NAME.toLowerCase()}_${streamIndex}`;
+      const baseName = formatSingleLineTitle(meta.name, `${GROUP_NAME} ${streamIndex}`);
+      const key = normalizeText(baseName) || `${GROUP_NAME.toLowerCase()}_${streamIndex}`;
 
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
           id: `${ID_PREFIX}${itemsMap.size + 1}`,
-          name: meta.name,
+          baseName,
+          name: baseName,
           poster: meta.poster || undefined,
           posterShape: "landscape",
           genres: [GROUP_NAME],
@@ -113,7 +122,9 @@ function parseM3U(m3uText) {
 
       const entry = itemsMap.get(key);
       const streamObj = {
-        title: `[${GROUP_NAME}] ${meta.name} (Luồng ${entry.streams.length + 1})`,
+        title: formatSingleLineTitle(
+          `[${GROUP_NAME}] ${entry.baseName} (Luồng ${entry.streams.length + 1})`
+        ),
         url: line,
         behaviorHints: {
           notWebReady: false
@@ -130,6 +141,11 @@ function parseM3U(m3uText) {
       }
 
       entry.streams.push(streamObj);
+      entry.name =
+        entry.streams.length >= HOT_STREAM_THRESHOLD && !entry.baseName.includes("🔥")
+          ? formatSingleLineTitle(`🔥 ${entry.baseName}`)
+          : entry.baseName;
+
       currentMeta = null;
     }
   }
