@@ -6,7 +6,9 @@ const FETCH_TIMEOUT_MS = 10000;
 
 const M3U_URL = process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1";
 const GROUP_NAME = "Xôi Chè TV";
-const BALL_LOGO_URL = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/26bd.png";
+const ID_PREFIX = "thtt_";
+const BALL_LOGO_URL =
+  "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/26bd.png";
 
 let cache = {
   expiresAt: 0,
@@ -16,7 +18,7 @@ let cache = {
 const manifest = {
   id: "org.thtt.m3u.addon",
   version: "1.4.0",
-  name: "Bóng Đá BLTV",
+  name: "Thể Thao BLTV",
   description: "Addon Stremio xem luồng trực tiếp từ nguồn Xôi Chè TV",
   logo: BALL_LOGO_URL,
   resources: ["catalog", "stream"],
@@ -29,7 +31,7 @@ const manifest = {
       extra: [{ name: "search", isRequired: false }]
     }
   ],
-  idPrefixes: ["thtt_"]
+  idPrefixes: [ID_PREFIX]
 };
 
 const builder = new addonBuilder(manifest);
@@ -44,11 +46,20 @@ function normalizeText(str = "") {
     .trim();
 }
 
+function createEmptyMeta(fallbackIndex) {
+  return {
+    name: `${GROUP_NAME} ${fallbackIndex}`,
+    poster: "",
+    userAgent: "",
+    referer: ""
+  };
+}
+
 function parseM3U(m3uText) {
-  const lines = m3uText.split(/\r?\n/);
+  const lines = String(m3uText || "").split(/\r?\n/);
   const itemsMap = new Map();
   let currentMeta = null;
-  let indexCounter = 0;
+  let streamIndex = 0;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -56,29 +67,42 @@ function parseM3U(m3uText) {
 
     if (line.startsWith("#EXTINF:")) {
       const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
+      const uaMatch = line.match(/http-user-agent="([^"]*)"/i);
+      const refMatch = line.match(/http-referrer="([^"]*)"/i);
       const commaIdx = line.lastIndexOf(",");
       const title =
         commaIdx !== -1
           ? line.slice(commaIdx + 1).trim()
-          : `${GROUP_NAME} ${indexCounter + 1}`;
+          : `${GROUP_NAME} ${streamIndex + 1}`;
 
       currentMeta = {
-        name: title || `${GROUP_NAME} ${indexCounter + 1}`,
-        poster: logoMatch && logoMatch[1] ? logoMatch[1].trim() : ""
+        name: title || `${GROUP_NAME} ${streamIndex + 1}`,
+        poster: logoMatch && logoMatch[1] ? logoMatch[1].trim() : "",
+        userAgent: uaMatch && uaMatch[1] ? uaMatch[1].trim() : "",
+        referer: refMatch && refMatch[1] ? refMatch[1].trim() : ""
       };
-    } else if (!line.startsWith("#")) {
-      const streamUrl = line;
-      indexCounter += 1;
+      continue;
+    }
 
-      const meta = currentMeta || {
-        name: `${GROUP_NAME} ${indexCounter}`,
-        poster: ""
-      };
+    if (line.startsWith("#EXTVOPT:")) {
+      if (!currentMeta) {
+        currentMeta = createEmptyMeta(streamIndex + 1);
+      }
+      const uaOpt = line.match(/http-user-agent=([^\s,]+)/i);
+      const refOpt = line.match(/http-referrer=([^\s,]+)/i);
+      if (uaOpt && uaOpt[1]) currentMeta.userAgent = uaOpt[1].trim();
+      if (refOpt && refOpt[1]) currentMeta.referer = refOpt[1].trim();
+      continue;
+    }
 
-      const key = normalizeText(meta.name);
+    if (!line.startsWith("#")) {
+      streamIndex += 1;
+      const meta = currentMeta || createEmptyMeta(streamIndex);
+      const key = normalizeText(meta.name) || `${GROUP_NAME.toLowerCase()}_${streamIndex}`;
+
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
-          id: `thtt_${itemsMap.size + 1}`,
+          id: `${ID_PREFIX}${itemsMap.size + 1}`,
           name: meta.name,
           poster: meta.poster || undefined,
           posterShape: "landscape",
@@ -88,14 +112,24 @@ function parseM3U(m3uText) {
       }
 
       const entry = itemsMap.get(key);
-      entry.streams.push({
+      const streamObj = {
         title: `[${GROUP_NAME}] ${meta.name} (Luồng ${entry.streams.length + 1})`,
-        url: streamUrl,
+        url: line,
         behaviorHints: {
           notWebReady: false
         }
-      });
+      };
 
+      if (meta.userAgent || meta.referer) {
+        streamObj.behaviorHints.proxyHeaders = {
+          request: {
+            ...(meta.userAgent ? { "User-Agent": meta.userAgent } : {}),
+            ...(meta.referer ? { Referer: meta.referer } : {})
+          }
+        };
+      }
+
+      entry.streams.push(streamObj);
       currentMeta = null;
     }
   }
@@ -110,14 +144,15 @@ async function getPlaylistItems() {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(M3U_URL, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+    const response = await fetch(M3U_URL, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
-    const text = await res.text();
+
+    const text = await response.text();
     const parsed = parseM3U(text);
 
     if (parsed.length > 0) {
@@ -126,12 +161,13 @@ async function getPlaylistItems() {
         items: parsed
       };
     }
+
     return cache.items;
   } catch (err) {
     console.error(`Lỗi tải M3U (${M3U_URL}):`, err.message);
     return cache.items;
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(timer);
   }
 }
 
@@ -143,8 +179,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   let items = await getPlaylistItems();
 
   if (extra && extra.search) {
-    const q = normalizeText(extra.search);
-    items = items.filter((item) => normalizeText(item.name).includes(q));
+    const keyword = normalizeText(extra.search);
+    items = items.filter((item) => normalizeText(item.name).includes(keyword));
   }
 
   const metas = items.map((item) => ({
@@ -160,18 +196,14 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (type !== "tv" || !id.startsWith("thtt_")) {
+  if (type !== "tv" || !id.startsWith(ID_PREFIX)) {
     return { streams: [] };
   }
 
   const items = await getPlaylistItems();
   const found = items.find((item) => item.id === id);
 
-  if (!found) {
-    return { streams: [] };
-  }
-
-  return { streams: found.streams };
+  return { streams: found ? found.streams : [] };
 });
 
 const addonInterface = builder.getInterface();
