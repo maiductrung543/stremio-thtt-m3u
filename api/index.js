@@ -6,13 +6,6 @@ const FETCH_TIMEOUT_MS = 10000;
 
 const M3U_SOURCES = [
   {
-    catalogId: "catalog_truyen_hinh",
-    url: process.env.M3U_TRUYEN_HINH || "https://tinyurl.com/vietxiaomi",
-    groupName: "Truyền Hình",
-    forceGroup: true,
-    allowedGroupKeyword: null
-  },
-  {
     catalogId: "catalog_xoi_che_tv",
     url: process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1",
     groupName: "Xôi Chè TV",
@@ -35,18 +28,12 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.2.0",
-  name: "THTT M3U TV",
-  description: "Addon Stremio tách riêng 3 mục: Truyền Hình, Xôi Chè TV, Giờ Vàng TV",
+  version: "1.2.1",
+  name: "Thể Thao BLTV",
+  description: "Addon Stremio xem luồng trực tiếp Xôi Chè TV và Giờ Vàng TV",
   resources: ["catalog", "stream"],
   types: ["tv"],
   catalogs: [
-    {
-      type: "tv",
-      id: "catalog_truyen_hinh",
-      name: "Truyền Hình",
-      extra: [{ name: "search", isRequired: false }]
-    },
     {
       type: "tv",
       id: "catalog_xoi_che_tv",
