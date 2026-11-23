@@ -6,18 +6,21 @@ const FETCH_TIMEOUT_MS = 10000;
 
 const M3U_SOURCES = [
   {
+    catalogId: "catalog_truyen_hinh",
     url: process.env.M3U_TRUYEN_HINH || "https://tinyurl.com/vietxiaomi",
     groupName: "Truyền Hình",
     forceGroup: true,
     allowedGroupKeyword: null
   },
   {
+    catalogId: "catalog_xoi_che_tv",
     url: process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1",
     groupName: "Xôi Chè TV",
     forceGroup: true,
     allowedGroupKeyword: null
   },
   {
+    catalogId: "catalog_gio_vang_tv",
     url: process.env.M3U_GIO_VANG || "https://thtt.pages.dev/tttt.m3u",
     groupName: "Giờ Vàng TV",
     forceGroup: true,
@@ -32,20 +35,29 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "THTT M3U TV",
-  description: "Addon Stremio lọc & phân nhóm Truyền Hình, Xôi Chè TV, Giờ Vàng TV",
+  description: "Addon Stremio tách riêng 3 mục: Truyền Hình, Xôi Chè TV, Giờ Vàng TV",
   resources: ["catalog", "stream"],
   types: ["tv"],
   catalogs: [
     {
       type: "tv",
-      id: "thtt_m3u_catalog",
-      name: "Danh sách kênh & luồng",
-      extra: [
-        { name: "genre", isRequired: false, options: ["Truyền Hình", "Xôi Chè TV", "Giờ Vàng TV"] },
-        { name: "search", isRequired: false }
-      ]
+      id: "catalog_truyen_hinh",
+      name: "Truyền Hình",
+      extra: [{ name: "search", isRequired: false }]
+    },
+    {
+      type: "tv",
+      id: "catalog_xoi_che_tv",
+      name: "Xôi Chè TV",
+      extra: [{ name: "search", isRequired: false }]
+    },
+    {
+      type: "tv",
+      id: "catalog_gio_vang_tv",
+      name: "Giờ Vàng TV",
+      extra: [{ name: "search", isRequired: false }]
     }
   ],
   idPrefixes: ["thtt_"]
@@ -96,7 +108,7 @@ function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
         rawGroup: ""
       };
 
-      // Nếu nguồn có yêu cầu lọc theo group-title (như Giờ Vàng TV trên tttt.m3u)
+      // Chỉ lọc lấy mục thuộc nhóm Giờ Vàng TV từ nguồn tttt.m3u
       if (sourceConfig.allowedGroupKeyword) {
         const normRawGroup = normalizeText(meta.rawGroup);
         const normKeyword = normalizeText(sourceConfig.allowedGroupKeyword);
@@ -110,11 +122,11 @@ function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
         ? sourceConfig.groupName
         : meta.rawGroup || sourceConfig.groupName;
 
-      // Gom trùng theo tên + nhóm để tránh trộn lẫn kênh giữa các nhóm khác nhau
-      const key = `${normalizeText(meta.name)}__${normalizeText(assignedGroup)}`;
+      const key = `${sourceConfig.catalogId}__${normalizeText(meta.name)}`;
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
           id: `thtt_${itemsMap.size + 1}`,
+          catalogId: sourceConfig.catalogId,
           name: meta.name,
           poster: meta.poster || undefined,
           posterShape: "landscape",
@@ -176,18 +188,13 @@ async function getPlaylistItems() {
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-  if (type !== "tv" || id !== "thtt_m3u_catalog") {
+  const validCatalogIds = M3U_SOURCES.map((s) => s.catalogId);
+  if (type !== "tv" || !validCatalogIds.includes(id)) {
     return { metas: [] };
   }
 
   let items = await getPlaylistItems();
-
-  if (extra && extra.genre) {
-    const targetGenre = normalizeText(extra.genre);
-    items = items.filter((item) =>
-      (item.genres || []).some((g) => normalizeText(g) === targetGenre)
-    );
-  }
+  items = items.filter((item) => item.catalogId === id);
 
   if (extra && extra.search) {
     const q = normalizeText(extra.search);
