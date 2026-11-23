@@ -3,13 +3,30 @@ const fetch = require("node-fetch");
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000;
-const HOT_STREAM_THRESHOLD = 4;
 
-const M3U_URL = process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1";
-const GROUP_NAME = "Xôi Chè TV";
-const ID_PREFIX = "thtt_";
-const BALL_LOGO_URL =
-  "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/26bd.png";
+const M3U_SOURCES = [
+  {
+    catalogId: "catalog_truyen_hinh",
+    url: process.env.M3U_TRUYEN_HINH || "https://tinyurl.com/vietxiaomi",
+    groupName: "Truyền Hình",
+    forceGroup: true,
+    allowedGroupKeyword: null
+  },
+  {
+    catalogId: "catalog_xoi_che_tv",
+    url: process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1",
+    groupName: "Xôi Chè TV",
+    forceGroup: true,
+    allowedGroupKeyword: null
+  },
+  {
+    catalogId: "catalog_gio_vang_tv",
+    url: process.env.M3U_GIO_VANG || "https://thtt.pages.dev/tttt.m3u",
+    groupName: "Giờ Vàng TV",
+    forceGroup: true,
+    allowedGroupKeyword: "gio vang tv"
+  }
+];
 
 let cache = {
   expiresAt: 0,
@@ -18,21 +35,32 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.5.0",
-  name: "Thể Thao BLTV",
-  description: "Addon Stremio xem luồng trực tiếp từ nguồn Xôi Chè TV",
-  logo: BALL_LOGO_URL,
+  version: "1.2.0",
+  name: "THTT M3U TV",
+  description: "Addon Stremio tách riêng 3 mục: Truyền Hình, Xôi Chè TV, Giờ Vàng TV",
   resources: ["catalog", "stream"],
   types: ["tv"],
   catalogs: [
     {
       type: "tv",
+      id: "catalog_truyen_hinh",
+      name: "Truyền Hình",
+      extra: [{ name: "search", isRequired: false }]
+    },
+    {
+      type: "tv",
       id: "catalog_xoi_che_tv",
       name: "Xôi Chè TV",
       extra: [{ name: "search", isRequired: false }]
+    },
+    {
+      type: "tv",
+      id: "catalog_gio_vang_tv",
+      name: "Giờ Vàng TV",
+      extra: [{ name: "search", isRequired: false }]
     }
   ],
-  idPrefixes: [ID_PREFIX]
+  idPrefixes: ["thtt_"]
 };
 
 const builder = new addonBuilder(manifest);
@@ -47,28 +75,10 @@ function normalizeText(str = "") {
     .trim();
 }
 
-function formatSingleLineTitle(rawTitle = "", fallbackTitle = "") {
-  const cleaned = String(rawTitle || fallbackTitle)
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned || fallbackTitle;
-}
-
-function createEmptyMeta(fallbackIndex) {
-  return {
-    name: `${GROUP_NAME} ${fallbackIndex}`,
-    poster: "",
-    userAgent: "",
-    referer: ""
-  };
-}
-
-function parseM3U(m3uText) {
-  const lines = String(m3uText || "").split(/\r?\n/);
-  const itemsMap = new Map();
+function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
+  const lines = m3uText.split(/\r?\n/);
   let currentMeta = null;
-  let streamIndex = 0;
+  let indexCounter = 0;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -76,81 +86,77 @@ function parseM3U(m3uText) {
 
     if (line.startsWith("#EXTINF:")) {
       const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
-      const uaMatch = line.match(/http-user-agent="([^"]*)"/i);
-      const refMatch = line.match(/http-referrer="([^"]*)"/i);
+      const groupMatch = line.match(/group-title="([^"]*)"/i);
       const commaIdx = line.lastIndexOf(",");
-      const fallbackName = `${GROUP_NAME} ${streamIndex + 1}`;
-      const rawTitle = commaIdx !== -1 ? line.slice(commaIdx + 1) : fallbackName;
+      const title =
+        commaIdx !== -1
+          ? line.slice(commaIdx + 1).trim()
+          : `${sourceConfig.groupName} ${indexCounter + 1}`;
 
       currentMeta = {
-        name: formatSingleLineTitle(rawTitle, fallbackName),
+        name: title || `${sourceConfig.groupName} ${indexCounter + 1}`,
         poster: logoMatch && logoMatch[1] ? logoMatch[1].trim() : "",
-        userAgent: uaMatch && uaMatch[1] ? uaMatch[1].trim() : "",
-        referer: refMatch && refMatch[1] ? refMatch[1].trim() : ""
+        rawGroup: groupMatch && groupMatch[1] ? groupMatch[1].trim() : ""
       };
-      continue;
-    }
+    } else if (!line.startsWith("#")) {
+      const streamUrl = line;
+      indexCounter += 1;
 
-    if (line.startsWith("#EXTVOPT:")) {
-      if (!currentMeta) {
-        currentMeta = createEmptyMeta(streamIndex + 1);
+      const meta = currentMeta || {
+        name: `${sourceConfig.groupName} ${indexCounter}`,
+        poster: "",
+        rawGroup: ""
+      };
+
+      // Chỉ lọc lấy mục thuộc nhóm Giờ Vàng TV từ nguồn tttt.m3u
+      if (sourceConfig.allowedGroupKeyword) {
+        const normRawGroup = normalizeText(meta.rawGroup);
+        const normKeyword = normalizeText(sourceConfig.allowedGroupKeyword);
+        if (!normRawGroup.includes(normKeyword)) {
+          currentMeta = null;
+          continue;
+        }
       }
-      const uaOpt = line.match(/http-user-agent=([^\s,]+)/i);
-      const refOpt = line.match(/http-referrer=([^\s,]+)/i);
-      if (uaOpt && uaOpt[1]) currentMeta.userAgent = uaOpt[1].trim();
-      if (refOpt && refOpt[1]) currentMeta.referer = refOpt[1].trim();
-      continue;
-    }
 
-    if (!line.startsWith("#")) {
-      streamIndex += 1;
-      const meta = currentMeta || createEmptyMeta(streamIndex);
-      const baseName = formatSingleLineTitle(meta.name, `${GROUP_NAME} ${streamIndex}`);
-      const key = normalizeText(baseName) || `${GROUP_NAME.toLowerCase()}_${streamIndex}`;
+      const assignedGroup = sourceConfig.forceGroup
+        ? sourceConfig.groupName
+        : meta.rawGroup || sourceConfig.groupName;
 
+      const key = `${sourceConfig.catalogId}__${normalizeText(meta.name)}`;
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
-          id: `${ID_PREFIX}${itemsMap.size + 1}`,
-          baseName,
-          name: baseName,
+          id: `thtt_${itemsMap.size + 1}`,
+          catalogId: sourceConfig.catalogId,
+          name: meta.name,
           poster: meta.poster || undefined,
           posterShape: "landscape",
-          genres: [GROUP_NAME],
+          genres: [assignedGroup],
           streams: []
         });
       }
 
       const entry = itemsMap.get(key);
-      const streamObj = {
-        title: formatSingleLineTitle(
-          `[${GROUP_NAME}] ${entry.baseName} (Luồng ${entry.streams.length + 1})`
-        ),
-        url: line,
-        behaviorHints: {
-          notWebReady: false
-        }
-      };
-
-      if (meta.userAgent || meta.referer) {
-        streamObj.behaviorHints.proxyHeaders = {
-          request: {
-            ...(meta.userAgent ? { "User-Agent": meta.userAgent } : {}),
-            ...(meta.referer ? { Referer: meta.referer } : {})
-          }
-        };
-      }
-
-      entry.streams.push(streamObj);
-      entry.name =
-        entry.streams.length >= HOT_STREAM_THRESHOLD && !entry.baseName.includes("🔥")
-          ? formatSingleLineTitle(`🔥 ${entry.baseName}`)
-          : entry.baseName;
+      entry.streams.push({
+        title: `[${assignedGroup}] ${meta.name} (Luồng ${entry.streams.length + 1})`,
+        url: streamUrl
+      });
 
       currentMeta = null;
     }
   }
+}
 
-  return Array.from(itemsMap.values());
+async function fetchSingleSource(sourceConfig) {
+  try {
+    const res = await fetch(sourceConfig.url, { timeout: FETCH_TIMEOUT_MS });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return await res.text();
+  } catch (err) {
+    console.error(`Lỗi tải nguồn [${sourceConfig.groupName}] (${sourceConfig.url}):`, err.message);
+    return "";
+  }
 }
 
 async function getPlaylistItems() {
@@ -159,44 +165,40 @@ async function getPlaylistItems() {
     return cache.items;
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const itemsMap = new Map();
 
-  try {
-    const response = await fetch(M3U_URL, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+  await Promise.all(
+    M3U_SOURCES.map(async (sourceConfig) => {
+      const text = await fetchSingleSource(sourceConfig);
+      if (text) {
+        parseM3UForSource(text, sourceConfig, itemsMap);
+      }
+    })
+  );
 
-    const text = await response.text();
-    const parsed = parseM3U(text);
-
-    if (parsed.length > 0) {
-      cache = {
-        expiresAt: now + CACHE_TTL_MS,
-        items: parsed
-      };
-    }
-
-    return cache.items;
-  } catch (err) {
-    console.error(`Lỗi tải M3U (${M3U_URL}):`, err.message);
-    return cache.items;
-  } finally {
-    clearTimeout(timer);
+  const parsed = Array.from(itemsMap.values());
+  if (parsed.length > 0) {
+    cache = {
+      expiresAt: now + CACHE_TTL_MS,
+      items: parsed
+    };
   }
+
+  return cache.items;
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-  if (type !== "tv" || id !== "catalog_xoi_che_tv") {
+  const validCatalogIds = M3U_SOURCES.map((s) => s.catalogId);
+  if (type !== "tv" || !validCatalogIds.includes(id)) {
     return { metas: [] };
   }
 
   let items = await getPlaylistItems();
+  items = items.filter((item) => item.catalogId === id);
 
   if (extra && extra.search) {
-    const keyword = normalizeText(extra.search);
-    items = items.filter((item) => normalizeText(item.name).includes(keyword));
+    const q = normalizeText(extra.search);
+    items = items.filter((item) => normalizeText(item.name).includes(q));
   }
 
   const metas = items.map((item) => ({
@@ -212,14 +214,18 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (type !== "tv" || !id.startsWith(ID_PREFIX)) {
+  if (type !== "tv" || !id.startsWith("thtt_")) {
     return { streams: [] };
   }
 
   const items = await getPlaylistItems();
   const found = items.find((item) => item.id === id);
 
-  return { streams: found ? found.streams : [] };
+  if (!found) {
+    return { streams: [] };
+  }
+
+  return { streams: found.streams };
 });
 
 const addonInterface = builder.getInterface();
