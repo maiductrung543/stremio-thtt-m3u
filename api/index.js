@@ -90,7 +90,10 @@ function parseM3U(m3uText) {
       const entry = itemsMap.get(key);
       entry.streams.push({
         title: `[${GROUP_NAME}] ${meta.name} (Luồng ${entry.streams.length + 1})`,
-        url: streamUrl
+        url: streamUrl,
+        behaviorHints: {
+          notWebReady: false
+        }
       });
 
       currentMeta = null;
@@ -106,8 +109,11 @@ async function getPlaylistItems() {
     return cache.items;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   try {
-    const res = await fetch(M3U_URL, { timeout: FETCH_TIMEOUT_MS });
+    const res = await fetch(M3U_URL, { signal: controller.signal });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -124,6 +130,8 @@ async function getPlaylistItems() {
   } catch (err) {
     console.error(`Lỗi tải M3U (${M3U_URL}):`, err.message);
     return cache.items;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
