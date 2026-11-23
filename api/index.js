@@ -3,8 +3,17 @@ const fetch = require("node-fetch");
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000;
+const STREAM_TYPE = "movie";
+const ID_PREFIX = "thtt_";
 
 const M3U_SOURCES = [
+  {
+    catalogId: "catalog_truyen_hinh",
+    url: process.env.M3U_TRUYEN_HINH || "https://tinyurl.com/vietxiaomi",
+    groupName: "Truyền Hình",
+    forceGroup: true,
+    allowedGroupKeyword: null
+  },
   {
     catalogId: "catalog_xoi_che_tv",
     url: process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1",
@@ -28,26 +37,32 @@ let cache = {
 
 const manifest = {
   id: "org.thtt.m3u.addon",
-  version: "1.2.1",
-  name: "Thể Thao BLTV",
-  description: "Addon Stremio xem luồng trực tiếp Xôi Chè TV và Giờ Vàng TV",
+  version: "1.3.0",
+  name: "THTT M3U TV",
+  description: "Addon Stremio hiển thị kênh ra ngoài dạng thẻ ngang giống mục Phim lẻ",
   resources: ["catalog", "stream"],
-  types: ["tv"],
+  types: [STREAM_TYPE],
   catalogs: [
     {
-      type: "tv",
+      type: STREAM_TYPE,
+      id: "catalog_truyen_hinh",
+      name: "Truyền Hình",
+      extra: [{ name: "search", isRequired: false }]
+    },
+    {
+      type: STREAM_TYPE,
       id: "catalog_xoi_che_tv",
       name: "Xôi Chè TV",
       extra: [{ name: "search", isRequired: false }]
     },
     {
-      type: "tv",
+      type: STREAM_TYPE,
       id: "catalog_gio_vang_tv",
       name: "Giờ Vàng TV",
       extra: [{ name: "search", isRequired: false }]
     }
   ],
-  idPrefixes: ["thtt_"]
+  idPrefixes: [ID_PREFIX]
 };
 
 const builder = new addonBuilder(manifest);
@@ -112,7 +127,7 @@ function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
       const key = `${sourceConfig.catalogId}__${normalizeText(meta.name)}`;
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
-          id: `thtt_${itemsMap.size + 1}`,
+          id: `${ID_PREFIX}${itemsMap.size + 1}`,
           catalogId: sourceConfig.catalogId,
           name: meta.name,
           poster: meta.poster || undefined,
@@ -134,8 +149,11 @@ function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
 }
 
 async function fetchSingleSource(sourceConfig) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   try {
-    const res = await fetch(sourceConfig.url, { timeout: FETCH_TIMEOUT_MS });
+    const res = await fetch(sourceConfig.url, { signal: controller.signal });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -143,6 +161,8 @@ async function fetchSingleSource(sourceConfig) {
   } catch (err) {
     console.error(`Lỗi tải nguồn [${sourceConfig.groupName}] (${sourceConfig.url}):`, err.message);
     return "";
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -176,7 +196,7 @@ async function getPlaylistItems() {
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   const validCatalogIds = M3U_SOURCES.map((s) => s.catalogId);
-  if (type !== "tv" || !validCatalogIds.includes(id)) {
+  if (type !== STREAM_TYPE || !validCatalogIds.includes(id)) {
     return { metas: [] };
   }
 
@@ -190,7 +210,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
   const metas = items.map((item) => ({
     id: item.id,
-    type: "tv",
+    type: STREAM_TYPE,
     name: item.name,
     poster: item.poster,
     posterShape: item.posterShape,
@@ -201,7 +221,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (type !== "tv" || !id.startsWith("thtt_")) {
+  if (type !== STREAM_TYPE || !id.startsWith(ID_PREFIX)) {
     return { streams: [] };
   }
 
