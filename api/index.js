@@ -3,13 +3,13 @@ const { addonBuilder, getRouter } = require("stremio-addon-sdk");
 const M3U_URL = "https://tinyurl.com/xoiche1";
 const CACHE_TTL_MS = 2 * 60 * 1000; // Cache 2 phút
 
-// Ảnh logo quả bóng đá chuẩn vuông gọn khung
-const DEFAULT_LOGO =
-  "https://images.unsplash.com/photo-1614632537423-1e6c2e7e0aab?auto=format&fit=crop&w=256&h=256&q=80";
-
-// Ảnh sân vận động / khán đài bóng đá cho poster & hình nền
+// Ảnh 2: Quả bóng đá hiệu ứng vệt màu (poster / logo)
 const DEFAULT_POSTER =
-  "https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=800&h=450&q=80";
+  "https://raw.githubusercontent.com/maiductrung543/stremio-xoiche-m3u/refs/heads/main/IMG_9239.png";
+
+// Ảnh 4: Sân vận động ánh đèn xanh/trắng (ảnh nền chi tiết trận đấu)
+const DEFAULT_BACKGROUND =
+  "https://raw.githubusercontent.com/maiductrung543/stremio-xoiche-m3u/refs/heads/main/IMG_9240.jpeg";
 
 let cachedItems = null;
 let lastFetchTime = 0;
@@ -52,8 +52,8 @@ function parseM3U(m3uText) {
           grouped.set(key, {
             id: toId(currentName),
             name: currentName,
-            logo: DEFAULT_LOGO,
             poster: DEFAULT_POSTER,
+            background: DEFAULT_BACKGROUND,
             group: currentGroup,
             streams: []
           });
@@ -110,11 +110,11 @@ async function getPlaylistItems() {
 
 const manifest = {
   id: "org.trung.xoiche.m3u",
-  version: "1.0.1",
+  version: "1.0.3",
   name: "Xoiche M3U Stream",
   description: "Trực tiếp bóng đá từ danh sách phát Xoiche M3U",
-  logo: DEFAULT_LOGO,
-  background: DEFAULT_POSTER,
+  logo: DEFAULT_POSTER,
+  background: DEFAULT_BACKGROUND,
   types: ["tv", "other"],
   catalogs: [
     {
@@ -151,10 +151,9 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     id: item.id,
     type: "tv",
     name: item.name,
-    poster: item.poster,
+    poster: DEFAULT_POSTER,
     posterShape: "landscape",
-    logo: item.logo,
-    background: item.poster,
+    background: DEFAULT_BACKGROUND,
     genres: item.group ? [item.group] : []
   }));
 
@@ -178,7 +177,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
       name: found ? found.name : decodedName,
       poster: DEFAULT_POSTER,
       posterShape: "landscape",
-      background: DEFAULT_POSTER,
+      background: DEFAULT_BACKGROUND,
       description: found
         ? `Nhóm: ${found.group || "Bóng đá"} • Số luồng: ${found.streams.length}`
         : "Luồng phát trực tiếp"
@@ -186,7 +185,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
   };
 });
 
-// 3. Danh sách luồng phát (Stream - Đã ẩn link m3u8)
+// 3. Danh sách luồng phát (Stream - Ẩn link m3u8)
 builder.defineStreamHandler(async ({ type, id }) => {
   if (type !== "tv" || !id.startsWith("m3u_")) {
     return { streams: [] };
