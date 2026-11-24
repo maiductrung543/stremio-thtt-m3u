@@ -110,7 +110,7 @@ async function getPlaylistItems() {
 
 const manifest = {
   id: "org.trung.xoiche.m3u",
-  version: "1.0.3",
+  version: "1.0.4",
   name: "Xoiche M3U Stream",
   description: "Trực tiếp bóng đá từ danh sách phát Xoiche M3U",
   logo: DEFAULT_POSTER,
@@ -121,7 +121,11 @@ const manifest = {
       type: "tv",
       id: "xoiche_m3u_catalog",
       name: "Xoiche M3U",
-      extra: [{ name: "search", isRequired: false }]
+      posterShape: "landscape",
+      extra: [
+        { name: "search", isRequired: false },
+        { name: "skip", isRequired: false }
+      ]
     }
   ],
   resources: ["catalog", "meta", "stream"],
@@ -130,7 +134,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// 1. Danh mục (Catalog + Tìm kiếm)
+// 1. Danh mục (Catalog + Tìm kiếm + Phân trang skip)
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   if (type !== "tv" || id !== "xoiche_m3u_catalog") {
     return { metas: [] };
@@ -145,6 +149,11 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         item.name.toLowerCase().includes(q) ||
         (item.group && item.group.toLowerCase().includes(q))
     );
+  }
+
+  const skip = extra && extra.skip ? parseInt(extra.skip, 10) || 0 : 0;
+  if (skip > 0) {
+    items = items.slice(skip);
   }
 
   const metas = items.map((item) => ({
