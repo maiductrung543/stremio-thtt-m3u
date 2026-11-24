@@ -1,246 +1,228 @@
 const { addonBuilder, getRouter } = require("stremio-addon-sdk");
-const fetch = require("node-fetch");
 
-const CACHE_TTL_MS = 3 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 10000;
-const STREAM_TYPE = "movie";
-const ID_PREFIX = "thtt_";
+const M3U_URL = "https://tinyurl.com/xoiche1";
+const CACHE_TTL_MS = 2 * 60 * 1000; // Cache 2 phút để giảm tải gọi M3U liên tục
 
-const M3U_SOURCES = [
-  {
-    catalogId: "catalog_truyen_hinh",
-    url: process.env.M3U_TRUYEN_HINH || "https://tinyurl.com/vietxiaomi",
-    groupName: "Truyền Hình",
-    forceGroup: true,
-    allowedGroupKeyword: null
-  },
-  {
-    catalogId: "catalog_xoi_che_tv",
-    url: process.env.M3U_XOI_CHE || "https://tinyurl.com/xoiche1",
-    groupName: "Xôi Chè TV",
-    forceGroup: true,
-    allowedGroupKeyword: null
-  },
-  {
-    catalogId: "catalog_gio_vang_tv",
-    url: process.env.M3U_GIO_VANG || "https://thtt.pages.dev/tttt.m3u",
-    groupName: "Giờ Vàng TV",
-    forceGroup: true,
-    allowedGroupKeyword: "gio vang tv"
-  }
-];
+let cachedItems = null;
+let lastFetchTime = 0;
 
-let cache = {
-  expiresAt: 0,
-  items: []
-};
-
-const manifest = {
-  id: "org.thtt.m3u.addon",
-  version: "1.3.0",
-  name: "THTT M3U TV",
-  description: "Addon Stremio hiển thị kênh ra ngoài dạng thẻ ngang giống mục Phim lẻ",
-  resources: ["catalog", "stream"],
-  types: [STREAM_TYPE],
-  catalogs: [
-    {
-      type: STREAM_TYPE,
-      id: "catalog_truyen_hinh",
-      name: "Truyền Hình",
-      extra: [{ name: "search", isRequired: false }]
-    },
-    {
-      type: STREAM_TYPE,
-      id: "catalog_xoi_che_tv",
-      name: "Xôi Chè TV",
-      extra: [{ name: "search", isRequired: false }]
-    },
-    {
-      type: STREAM_TYPE,
-      id: "catalog_gio_vang_tv",
-      name: "Giờ Vàng TV",
-      extra: [{ name: "search", isRequired: false }]
-    }
-  ],
-  idPrefixes: [ID_PREFIX]
-};
-
-const builder = new addonBuilder(manifest);
-
-function normalizeText(str = "") {
-  return String(str)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/\s+/g, " ")
-    .trim();
+// Tạo ID an toàn dạng base64url cho từng mục trong M3U
+function toId(str) {
+  return "m3u_" + Buffer.from(str, "utf8").toString("base64url");
 }
 
-function parseM3UForSource(m3uText, sourceConfig, itemsMap) {
-  const lines = m3uText.split(/\r?\n/);
-  let currentMeta = null;
-  let indexCounter = 0;
+function fromId(id) {
+  if (!id || !id.startsWith("m3u_")) return null;
+  try {
+    return Buffer.from(id.slice(4), "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+}
 
-  for (const rawLine of lines) {
+// Phân tích nội dung file M3U thành danh sách kênh/trận đấu
+function parseM3U(m3uText) {
+  const lines = m3uText.split(/\r?\n/);
+  const grouped = new Map();
+
+  let currentName = null;
+  let currentLogo = null;
+  let currentGroup = null;
+
+  for (let rawLine of lines) {
     const line = rawLine.trim();
     if (!line) continue;
 
     if (line.startsWith("#EXTINF:")) {
-      const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
-      const groupMatch = line.match(/group-title="([^"]*)"/i);
+      // Lấy tên hiển thị sau dấu phẩy cuối cùng
       const commaIdx = line.lastIndexOf(",");
-      const title =
-        commaIdx !== -1
-          ? line.slice(commaIdx + 1).trim()
-          : `${sourceConfig.groupName} ${indexCounter + 1}`;
+      currentName = commaIdx !== -1 ? line.slice(commaIdx + 1).trim() : "Kênh chưa đặt tên";
 
-      currentMeta = {
-        name: title || `${sourceConfig.groupName} ${indexCounter + 1}`,
-        poster: logoMatch && logoMatch[1] ? logoMatch[1].trim() : "",
-        rawGroup: groupMatch && groupMatch[1] ? groupMatch[1].trim() : ""
-      };
+      // Lấy logo nếu có
+      const logoMatch = line.match(/tvg-logo=["']([^"']+)["']/i);
+      currentLogo = logoMatch ? logoMatch[1].trim() : null;
+
+      // Lấy group-title nếu có
+      const groupMatch = line.match(/group-title=["']([^"']+)["']/i);
+      currentGroup = groupMatch ? groupMatch[1].trim() : "IPTV / Trực tiếp";
     } else if (!line.startsWith("#")) {
+      // Dòng này là URL luồng phát
       const streamUrl = line;
-      indexCounter += 1;
-
-      const meta = currentMeta || {
-        name: `${sourceConfig.groupName} ${indexCounter}`,
-        poster: "",
-        rawGroup: ""
-      };
-
-      // Chỉ lọc lấy mục thuộc nhóm Giờ Vàng TV từ nguồn tttt.m3u
-      if (sourceConfig.allowedGroupKeyword) {
-        const normRawGroup = normalizeText(meta.rawGroup);
-        const normKeyword = normalizeText(sourceConfig.allowedGroupKeyword);
-        if (!normRawGroup.includes(normKeyword)) {
-          currentMeta = null;
-          continue;
+      if (currentName && /^https?:\/\//i.test(streamUrl)) {
+        const key = currentName.toLowerCase();
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            id: toId(currentName),
+            name: currentName,
+            logo: currentLogo,
+            group: currentGroup,
+            streams: []
+          });
         }
+        const entry = grouped.get(key);
+        if (!entry.streams.includes(streamUrl)) {
+          entry.streams.push(streamUrl);
+        }
+        if (!entry.logo && currentLogo) entry.logo = currentLogo;
       }
-
-      const assignedGroup = sourceConfig.forceGroup
-        ? sourceConfig.groupName
-        : meta.rawGroup || sourceConfig.groupName;
-
-      const key = `${sourceConfig.catalogId}__${normalizeText(meta.name)}`;
-      if (!itemsMap.has(key)) {
-        itemsMap.set(key, {
-          id: `${ID_PREFIX}${itemsMap.size + 1}`,
-          catalogId: sourceConfig.catalogId,
-          name: meta.name,
-          poster: meta.poster || undefined,
-          posterShape: "landscape",
-          genres: [assignedGroup],
-          streams: []
-        });
-      }
-
-      const entry = itemsMap.get(key);
-      entry.streams.push({
-        title: `[${assignedGroup}] ${meta.name} (Luồng ${entry.streams.length + 1})`,
-        url: streamUrl
-      });
-
-      currentMeta = null;
+      currentName = null;
+      currentLogo = null;
+      currentGroup = null;
     }
   }
-}
 
-async function fetchSingleSource(sourceConfig) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(sourceConfig.url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    return await res.text();
-  } catch (err) {
-    console.error(`Lỗi tải nguồn [${sourceConfig.groupName}] (${sourceConfig.url}):`, err.message);
-    return "";
-  } finally {
-    clearTimeout(timer);
-  }
+  return Array.from(grouped.values());
 }
 
 async function getPlaylistItems() {
   const now = Date.now();
-  if (cache.items.length > 0 && now < cache.expiresAt) {
-    return cache.items;
+  if (cachedItems && now - lastFetchTime < CACHE_TTL_MS) {
+    return cachedItems;
   }
 
-  const itemsMap = new Map();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
 
-  await Promise.all(
-    M3U_SOURCES.map(async (sourceConfig) => {
-      const text = await fetchSingleSource(sourceConfig);
-      if (text) {
-        parseM3UForSource(text, sourceConfig, itemsMap);
+  try {
+    const res = await fetch(M3U_URL, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) StremioM3U/1.0"
       }
-    })
-  );
+    });
 
-  const parsed = Array.from(itemsMap.values());
-  if (parsed.length > 0) {
-    cache = {
-      expiresAt: now + CACHE_TTL_MS,
-      items: parsed
-    };
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const text = await res.text();
+    const parsed = parseM3U(text);
+
+    if (parsed.length > 0) {
+      cachedItems = parsed;
+      lastFetchTime = now;
+    }
+    return cachedItems || [];
+  } catch (err) {
+    console.error("Lỗi tải M3U:", err.message);
+    return cachedItems || [];
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return cache.items;
 }
 
+const manifest = {
+  id: "org.trung.xoiche.m3u",
+  version: "1.0.0",
+  name: "Xoiche M3U Stream",
+  description: "Danh sách phát M3U từ xoiche1 cho Stremio",
+  types: ["tv", "other"],
+  catalogs: [
+    {
+      type: "tv",
+      id: "xoiche_m3u_catalog",
+      name: "Xoiche M3U",
+      extra: [{ name: "search", isRequired: false }]
+    }
+  ],
+  resources: ["catalog", "meta", "stream"],
+  idPrefixes: ["m3u_"]
+};
+
+const builder = new addonBuilder(manifest);
+
+// 1. Danh mục (Catalog + Tìm kiếm)
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-  const validCatalogIds = M3U_SOURCES.map((s) => s.catalogId);
-  if (type !== STREAM_TYPE || !validCatalogIds.includes(id)) {
+  if (type !== "tv" || id !== "xoiche_m3u_catalog") {
     return { metas: [] };
   }
 
   let items = await getPlaylistItems();
-  items = items.filter((item) => item.catalogId === id);
 
   if (extra && extra.search) {
-    const q = normalizeText(extra.search);
-    items = items.filter((item) => normalizeText(item.name).includes(q));
+    const q = extra.search.trim().toLowerCase();
+    items = items.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        (item.group && item.group.toLowerCase().includes(q))
+    );
   }
 
   const metas = items.map((item) => ({
     id: item.id,
-    type: STREAM_TYPE,
+    type: "tv",
     name: item.name,
-    poster: item.poster,
-    posterShape: item.posterShape,
-    genres: item.genres
+    poster: item.logo || undefined,
+    posterShape: "landscape",
+    genres: item.group ? [item.group] : []
   }));
 
   return { metas };
 });
 
+// 2. Chi tiết mục (Meta)
+builder.defineMetaHandler(async ({ type, id }) => {
+  if (type !== "tv" || !id.startsWith("m3u_")) {
+    return { meta: null };
+  }
+
+  const items = await getPlaylistItems();
+  const found = items.find((item) => item.id === id);
+  const decodedName = fromId(id) || "Kênh phát";
+
+  return {
+    meta: {
+      id,
+      type: "tv",
+      name: found ? found.name : decodedName,
+      poster: found && found.logo ? found.logo : undefined,
+      posterShape: "landscape",
+      description: found
+        ? `Nhóm: ${found.group || "M3U"} • Số luồng: ${found.streams.length}`
+        : "Luồng phát từ danh sách M3U"
+    }
+  };
+});
+
+// 3. Danh sách link phát (Stream)
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (type !== STREAM_TYPE || !id.startsWith(ID_PREFIX)) {
+  if (type !== "tv" || !id.startsWith("m3u_")) {
     return { streams: [] };
   }
 
   const items = await getPlaylistItems();
   const found = items.find((item) => item.id === id);
 
-  if (!found) {
+  if (!found || !found.streams.length) {
     return { streams: [] };
   }
 
-  return { streams: found.streams };
+  const streams = found.streams.map((url, idx) => ({
+    name: found.streams.length > 1 ? `Link ${idx + 1}` : "Xoiche M3U",
+    title: `${found.name}\n${url}`,
+    url
+  }));
+
+  return { streams };
 });
 
-const addonInterface = builder.getInterface();
-const router = getRouter(addonInterface);
+const router = getRouter(builder.getInterface());
 
 module.exports = (req, res) => {
-  router(req, res, () => {
+  // Chuyển hướng trang gốc / sang /manifest.json để dễ kiểm tra
+  const cleanUrl = (req.url || "/").split("?")[0];
+  if (cleanUrl === "/" || cleanUrl === "") {
+    res.writeHead(302, { Location: "/manifest.json" });
+    return res.end();
+  }
+
+  router(req, res, (err) => {
+    if (err) {
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+      return;
+    }
     res.statusCode = 404;
-    res.end("Not found");
+    res.end("Not Found");
   });
 };
