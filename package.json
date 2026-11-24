@@ -1,16 +1,9 @@
 {
-  "name": "stremio-thtt-m3u",
+  "name": "stremio-xoiche-m3u",
   "version": "1.0.0",
-  "description": "Stremio addon đọc danh sách từ link M3U",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "description": "Stremio IPTV/M3U Addon for xoiche M3U playlist",
+  "main": "api/index.js",
   "dependencies": {
-    "node-fetch": "^2.7.0",
     "stremio-addon-sdk": "^1.6.10"
-  },
-  "engines": {
-    "node": ">=18"
   }
 }
