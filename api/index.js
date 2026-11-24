@@ -1,12 +1,19 @@
 const { addonBuilder, getRouter } = require("stremio-addon-sdk");
 
 const M3U_URL = "https://tinyurl.com/xoiche1";
-const CACHE_TTL_MS = 2 * 60 * 1000; // Cache 2 phút để giảm tải gọi M3U liên tục
+const CACHE_TTL_MS = 2 * 60 * 1000; // Cache 2 phút
+
+// Ảnh logo quả bóng đá chuẩn vuông gọn khung
+const DEFAULT_LOGO =
+  "https://images.unsplash.com/photo-1614632537423-1e6c2e7e0aab?auto=format&fit=crop&w=256&h=256&q=80";
+
+// Ảnh sân vận động / khán đài bóng đá cho poster & hình nền
+const DEFAULT_POSTER =
+  "https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=800&h=450&q=80";
 
 let cachedItems = null;
 let lastFetchTime = 0;
 
-// Tạo ID an toàn dạng base64url cho từng mục trong M3U
 function toId(str) {
   return "m3u_" + Buffer.from(str, "utf8").toString("base64url");
 }
@@ -20,13 +27,11 @@ function fromId(id) {
   }
 }
 
-// Phân tích nội dung file M3U thành danh sách kênh/trận đấu
 function parseM3U(m3uText) {
   const lines = m3uText.split(/\r?\n/);
   const grouped = new Map();
 
   let currentName = null;
-  let currentLogo = null;
   let currentGroup = null;
 
   for (let rawLine of lines) {
@@ -34,19 +39,12 @@ function parseM3U(m3uText) {
     if (!line) continue;
 
     if (line.startsWith("#EXTINF:")) {
-      // Lấy tên hiển thị sau dấu phẩy cuối cùng
       const commaIdx = line.lastIndexOf(",");
-      currentName = commaIdx !== -1 ? line.slice(commaIdx + 1).trim() : "Kênh chưa đặt tên";
+      currentName = commaIdx !== -1 ? line.slice(commaIdx + 1).trim() : "Trận đấu trực tiếp";
 
-      // Lấy logo nếu có
-      const logoMatch = line.match(/tvg-logo=["']([^"']+)["']/i);
-      currentLogo = logoMatch ? logoMatch[1].trim() : null;
-
-      // Lấy group-title nếu có
       const groupMatch = line.match(/group-title=["']([^"']+)["']/i);
-      currentGroup = groupMatch ? groupMatch[1].trim() : "IPTV / Trực tiếp";
+      currentGroup = groupMatch ? groupMatch[1].trim() : "Bóng đá trực tiếp";
     } else if (!line.startsWith("#")) {
-      // Dòng này là URL luồng phát
       const streamUrl = line;
       if (currentName && /^https?:\/\//i.test(streamUrl)) {
         const key = currentName.toLowerCase();
@@ -54,7 +52,8 @@ function parseM3U(m3uText) {
           grouped.set(key, {
             id: toId(currentName),
             name: currentName,
-            logo: currentLogo,
+            logo: DEFAULT_LOGO,
+            poster: DEFAULT_POSTER,
             group: currentGroup,
             streams: []
           });
@@ -63,10 +62,8 @@ function parseM3U(m3uText) {
         if (!entry.streams.includes(streamUrl)) {
           entry.streams.push(streamUrl);
         }
-        if (!entry.logo && currentLogo) entry.logo = currentLogo;
       }
       currentName = null;
-      currentLogo = null;
       currentGroup = null;
     }
   }
@@ -113,9 +110,11 @@ async function getPlaylistItems() {
 
 const manifest = {
   id: "org.trung.xoiche.m3u",
-  version: "1.0.0",
+  version: "1.0.1",
   name: "Xoiche M3U Stream",
-  description: "Danh sách phát M3U từ xoiche1 cho Stremio",
+  description: "Trực tiếp bóng đá từ danh sách phát Xoiche M3U",
+  logo: DEFAULT_LOGO,
+  background: DEFAULT_POSTER,
   types: ["tv", "other"],
   catalogs: [
     {
@@ -152,15 +151,17 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     id: item.id,
     type: "tv",
     name: item.name,
-    poster: item.logo || undefined,
+    poster: item.poster,
     posterShape: "landscape",
+    logo: item.logo,
+    background: item.poster,
     genres: item.group ? [item.group] : []
   }));
 
   return { metas };
 });
 
-// 2. Chi tiết mục (Meta)
+// 2. Chi tiết trận đấu (Meta)
 builder.defineMetaHandler(async ({ type, id }) => {
   if (type !== "tv" || !id.startsWith("m3u_")) {
     return { meta: null };
@@ -168,23 +169,24 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
   const items = await getPlaylistItems();
   const found = items.find((item) => item.id === id);
-  const decodedName = fromId(id) || "Kênh phát";
+  const decodedName = fromId(id) || "Trận đấu trực tiếp";
 
   return {
     meta: {
       id,
       type: "tv",
       name: found ? found.name : decodedName,
-      poster: found && found.logo ? found.logo : undefined,
+      poster: DEFAULT_POSTER,
       posterShape: "landscape",
+      background: DEFAULT_POSTER,
       description: found
-        ? `Nhóm: ${found.group || "M3U"} • Số luồng: ${found.streams.length}`
-        : "Luồng phát từ danh sách M3U"
+        ? `Nhóm: ${found.group || "Bóng đá"} • Số luồng: ${found.streams.length}`
+        : "Luồng phát trực tiếp"
     }
   };
 });
 
-// 3. Danh sách link phát (Stream)
+// 3. Danh sách luồng phát (Stream - Đã ẩn link m3u8)
 builder.defineStreamHandler(async ({ type, id }) => {
   if (type !== "tv" || !id.startsWith("m3u_")) {
     return { streams: [] };
@@ -198,8 +200,8 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 
   const streams = found.streams.map((url, idx) => ({
-    name: found.streams.length > 1 ? `Link ${idx + 1}` : "Xoiche M3U",
-    title: `${found.name}\n${url}`,
+    name: found.streams.length > 1 ? `⚽ Link ${idx + 1}` : "⚽ Xem Trực Tiếp",
+    title: found.name,
     url
   }));
 
@@ -209,7 +211,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
 const router = getRouter(builder.getInterface());
 
 module.exports = (req, res) => {
-  // Chuyển hướng trang gốc / sang /manifest.json để dễ kiểm tra
   const cleanUrl = (req.url || "/").split("?")[0];
   if (cleanUrl === "/" || cleanUrl === "") {
     res.writeHead(302, { Location: "/manifest.json" });
