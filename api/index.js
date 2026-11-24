@@ -110,9 +110,9 @@ async function getPlaylistItems() {
 
 const manifest = {
   id: "org.trung.xoiche.m3u",
-  version: "1.0.5",
-  name: "Xoiche M3U Stream",
-  description: "Trực tiếp bóng đá từ danh sách phát Xoiche M3U",
+  version: "1.0.6",
+  name: "Xôi Chè TV",
+  description: "Trực tiếp bóng đá Xôi Chè TV",
   logo: DEFAULT_POSTER,
   background: DEFAULT_BACKGROUND,
   types: ["movie", "other"],
@@ -120,7 +120,7 @@ const manifest = {
     {
       type: "movie",
       id: "xoiche_m3u_catalog",
-      name: "Xoiche M3U",
+      name: "Xôi Chè TV",
       posterShape: "landscape",
       extra: [
         { name: "search", isRequired: false },
