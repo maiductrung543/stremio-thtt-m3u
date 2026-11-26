@@ -1,3 +1,4 @@
+
 const { addonBuilder, getRouter } = require("stremio-addon-sdk");
 
 const M3U_URL = "https://tinyurl.com/xoiche1";
@@ -110,17 +111,17 @@ async function getPlaylistItems() {
 
 const manifest = {
   id: "org.trung.xoiche.m3u",
-  version: "1.0.7",
+  version: "1.0.6",
   name: "Xôi Chè TV",
   description: "Trực tiếp bóng đá Xôi Chè TV",
   logo: DEFAULT_POSTER,
   background: DEFAULT_BACKGROUND,
-  types: ["sports", "other"],
+  types: ["movie", "other"],
   catalogs: [
     {
-      type: "sports",
+      type: "movie",
       id: "xoiche_m3u_catalog",
-      name: "Bóng Đá - Bình Luận Tiếng Việt",
+      name: "Xôi Chè TV",
       posterShape: "landscape",
       extra: [
         { name: "search", isRequired: false },
@@ -136,7 +137,7 @@ const builder = new addonBuilder(manifest);
 
 // 1. Danh mục (Catalog + Tìm kiếm + Phân trang skip)
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-  if (type !== "sports" || id !== "xoiche_m3u_catalog") {
+  if (type !== "movie" || id !== "xoiche_m3u_catalog") {
     return { metas: [] };
   }
 
@@ -158,7 +159,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
   const metas = items.map((item) => ({
     id: item.id,
-    type: "sports",
+    type: "movie",
     name: item.name,
     poster: DEFAULT_POSTER,
     posterShape: "landscape",
@@ -171,7 +172,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
 // 2. Chi tiết trận đấu (Meta)
 builder.defineMetaHandler(async ({ type, id }) => {
-  if (type !== "sports" || !id.startsWith("m3u_")) {
+  if (type !== "movie" || !id.startsWith("m3u_")) {
     return { meta: null };
   }
 
@@ -182,7 +183,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
   return {
     meta: {
       id,
-      type: "sports",
+      type: "movie",
       name: found ? found.name : decodedName,
       poster: DEFAULT_POSTER,
       posterShape: "landscape",
@@ -196,7 +197,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
 // 3. Danh sách luồng phát (Stream - Ẩn link m3u8)
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (type !== "sports" || !id.startsWith("m3u_")) {
+  if (type !== "movie" || !id.startsWith("m3u_")) {
     return { streams: [] };
   }
 
